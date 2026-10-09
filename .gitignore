@@ -1,0 +1,28 @@
+# Python virtual environments & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+ENV/
+
+# Environment files and secrets
+.env
+.env.local
+*.pem
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Application Logs & Transcripts
+logs/*.log
+logs/*.json
+logs/transcripts/

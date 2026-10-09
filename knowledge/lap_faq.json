@@ -1,0 +1,80 @@
+[
+  {
+    "id": "max_loan_amount",
+    "tags": ["loan amount", "how much", "maximum", "limit", "kitna", "kitne"],
+    "question": "What is the maximum loan amount available under this offer?",
+    "answer": "Under this pre-approved offer, you can get a Loan Against Property of up to ₹75 lakh, subject to eligibility. If your requirement is higher, I can note that, and a loan expert will guide you on options."
+  },
+  {
+    "id": "eligible_properties",
+    "tags": ["property type", "which property", "kaunsi property", "property eligible", "residential", "commercial", "industrial", "agricultural"],
+    "question": "Which property types are eligible?",
+    "answer": "Residential, commercial, and industrial properties are eligible as collateral for this loan. Agricultural land is not eligible under this scheme."
+  },
+  {
+    "id": "loan_tenure",
+    "tags": ["tenure", "duration", "how long", "kitne saal", "years", "period", "repayment period"],
+    "question": "What is the loan tenure range?",
+    "answer": "The repayment tenure ranges from 3 years to 15 years. You can choose what works best for your budget within this range."
+  },
+  {
+    "id": "income_mode_requirement",
+    "tags": ["cash income", "cash payment", "income mode", "salary mode", "payment mode", "naqad", "cash"],
+    "question": "Is cash income accepted for qualification?",
+    "answer": "Income received through bank transfers, cheques, or online payments qualifies. Cash-only income does not meet the requirement for this loan product."
+  },
+  {
+    "id": "loan_purpose",
+    "tags": ["purpose", "use", "why", "kisliye", "loan use", "kyun", "reason", "kya kar sakte"],
+    "question": "What can the loan be used for?",
+    "answer": "A Loan Against Property is a multi-purpose loan. Common uses include business expansion, home renovation, education expenses, medical emergencies, and debt consolidation. A loan expert can walk you through the full range of permitted uses."
+  },
+  {
+    "id": "original_documents",
+    "tags": ["documents", "papers", "dastaveez", "original", "kaagazaat", "deed", "registry"],
+    "question": "Why are original property documents required?",
+    "answer": "Original property documents — such as the sale deed and title documents — are needed for legal verification and as collateral for the loan. Certified copies may also be considered in some cases; a loan expert can confirm the exact requirements for your situation."
+  },
+  {
+    "id": "processing_time",
+    "tags": ["how fast", "time", "kitne din", "days", "approval time", "processing", "kitna time", "quick", "process", "processing time", "how long process"],
+    "question": "How long does the loan processing take?",
+    "answer": "Processing timelines vary depending on document verification and valuation. A Senior Loan Expert will be able to give you a precise estimate once your qualification is complete."
+  },
+  {
+    "id": "interest_rate",
+    "tags": ["interest", "rate", "byaj", "interest rate", "kitna byaj", "percentage", "ROI", "return"],
+    "question": "What is the interest rate for this loan?",
+    "answer": "Interest rates depend on your profile, property valuation, and current market conditions. I am not able to quote a specific rate — a Senior Loan Expert will provide the exact rate applicable to your case after reviewing your documents."
+  },
+  {
+    "id": "prepayment",
+    "tags": ["prepayment", "early payment", "foreclose", "foreclosure", "close early", "pehle band", "part payment"],
+    "question": "Can I repay the loan early or make part-payments?",
+    "answer": "Prepayment and foreclosure options are available, and a loan expert will explain the applicable terms and any charges during your consultation. I cannot commit to specific fee structures on this call."
+  },
+  {
+    "id": "eligibility_criteria",
+    "tags": ["eligibility", "eligible", "qualify", "criteria", "who can", "kaun", "requirements", "paatrata"],
+    "question": "What are the eligibility criteria for this loan?",
+    "answer": "Key criteria include: property type (residential, commercial, or industrial), sole or joint ownership, original documents available, income received through banking channels (not cash only), and a tenure between 3 and 15 years. The maximum loan amount is ₹75 lakh. I will collect these details from you now to complete your qualification."
+  },
+  {
+    "id": "ownership_types",
+    "tags": ["owner", "ownership", "joint", "co-owner", "spouse", "partner", "malik", "sahmaliki"],
+    "question": "Is joint property ownership acceptable?",
+    "answer": "Yes, both sole ownership and joint ownership are acceptable for this loan. If the property is jointly owned, the co-owners may be required to be co-applicants; a loan expert will clarify the specifics."
+  },
+  {
+    "id": "self_employed",
+    "tags": ["self employed", "business", "self-employed", "khud ka kaam", "apna business", "proprietor", "freelance"],
+    "question": "Can self-employed individuals apply?",
+    "answer": "Yes, both salaried and self-employed individuals are eligible, provided income is received through banking channels rather than cash only."
+  },
+  {
+    "id": "existing_loan_transfer",
+    "tags": ["transfer", "balance transfer", "existing loan", "move loan", "another bank", "EMI reduce", "lower EMI", "current loan"],
+    "question": "Can I transfer my existing property loan here to get a lower EMI?",
+    "answer": "Yes, Home Credit offers loan transfer options for existing property loans. I will connect you with our Loan-Transfer Specialist who handles such requests specifically."
+  }
+]

@@ -1,0 +1,84 @@
+{
+  "scenarios": [
+    {
+      "id": "E2E-01",
+      "title": "Successful Customer Verification and Qualification",
+      "turns": [
+        {"role": "agent", "content": "Hello Priya! Is this Priya Sharma? Am I speaking to the right person?"},
+        {"role": "user", "content": "Yes I am Priya Sharma, I can speak now."},
+        {"role": "agent", "content": "Great! What type of property do you own, and what is your requested loan amount?"},
+        {"role": "user", "content": "I have a residential property, sole ownership, original docs, want 50L loan, salaried bank income, value 1.2 crore, 10 years tenure."},
+        {"role": "agent", "content": "Congratulations Priya! You qualify for CredVoice LAP. Transferring you to our loan specialist to complete your application."}
+      ],
+      "outcome": "ELIGIBLE_HANDOFF"
+    },
+    {
+      "id": "E2E-02",
+      "title": "Agricultural Property Disqualification",
+      "turns": [
+        {"role": "agent", "content": "Hello Ramesh! What type of property do you own?"},
+        {"role": "user", "content": "It is agricultural land in Punjab."},
+        {"role": "agent", "content": "Thank you Ramesh. Unfortunately, agricultural properties are not eligible for our Loan Against Property. Goodbye!"}
+      ],
+      "outcome": "DISQUALIFIED"
+    },
+    {
+      "id": "E2E-03",
+      "title": "Missing Original Documents Disqualification",
+      "turns": [
+        {"role": "user", "content": "I only have photocopies of my property papers, no original deed."},
+        {"role": "agent", "content": "We require original property title documents to process a loan against property. Unfortunately, we cannot proceed."}
+      ],
+      "outcome": "DISQUALIFIED"
+    },
+    {
+      "id": "E2E-04",
+      "title": "Cash-Only Income Disqualification",
+      "turns": [
+        {"role": "user", "content": "I get my income in cash only every month."},
+        {"role": "agent", "content": "Income must be deposited in a bank account to qualify. Unfortunately, cash income is not eligible."}
+      ],
+      "outcome": "DISQUALIFIED"
+    },
+    {
+      "id": "E2E-05",
+      "title": "Loan Amount > 75L — Consent Accepted",
+      "turns": [
+        {"role": "user", "content": "I need 1 crore rupees loan."},
+        {"role": "agent", "content": "Our maximum offer cap is ₹75 Lakh. Would you like to proceed with ₹75 Lakh?"},
+        {"role": "user", "content": "Yes I agree to proceed at 75 lakh offer cap."},
+        {"role": "agent", "content": "Perfect. You qualify for up to ₹75 Lakh. Connecting you to a specialist."}
+      ],
+      "outcome": "ELIGIBLE_HANDOFF"
+    },
+    {
+      "id": "E2E-06",
+      "title": "Loan Amount > 75L — Consent Declined",
+      "turns": [
+        {"role": "user", "content": "I need 1 crore loan."},
+        {"role": "agent", "content": "Our maximum offer cap is ₹75 Lakh. Would you like to proceed with ₹75 Lakh?"},
+        {"role": "user", "content": "No 75 lakh is too small for me, I decline."},
+        {"role": "agent", "content": "We understand. Thank you for your time. Goodbye!"}
+      ],
+      "outcome": "DISQUALIFIED"
+    },
+    {
+      "id": "E2E-08",
+      "title": "Existing Property Loan Routing to Transfer Specialist",
+      "turns": [
+        {"role": "user", "content": "I already have a LAP loan with HDFC bank."},
+        {"role": "agent", "content": "Since you have an existing loan, let me connect you directly to our Balance Transfer specialist."}
+      ],
+      "outcome": "TRANSFER_ROUTED"
+    },
+    {
+      "id": "E2E-15",
+      "title": "Bilingual Hindi Flow",
+      "turns": [
+        {"role": "user", "content": "हाँ मैं बात कर सकता हूँ, हिंदी में बात करें।"},
+        {"role": "agent", "content": "नमस्ते! CredVoice में आपका स्वागत है। आपके पास किस प्रकार की संपत्ति है?"}
+      ],
+      "outcome": "QUALIFICATION"
+    }
+  ]
+}
