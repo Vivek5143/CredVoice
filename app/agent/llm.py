@@ -321,6 +321,245 @@ class OpenAILLMAdapter(LLMAdapter):
 
 
 # ---------------------------------------------------------------------------
+# Gemini Production Adapter
+# ---------------------------------------------------------------------------
+
+class GeminiLLMAdapter(LLMAdapter):
+    """
+    Production LLM adapter using Google's official google-genai Python SDK.
+
+    Args:
+        api_key: Gemini API key. Defaults to GEMINI_API_KEY env var or settings.gemini_api_key.
+                 Credentials are never hardcoded or emitted in logs.
+        model: Model name. Defaults to settings.llm_model or 'gemini-2.0-flash'.
+               If the configured model looks like an OpenAI model (e.g. gpt-4o-mini),
+               it falls back to 'gemini-2.0-flash' automatically.
+        timeout_seconds: Request timeout in seconds (sync: passed via HttpOptions; async: asyncio.wait_for).
+        temperature: Sampling temperature (0.0–1.0).
+    """
+
+    _PLACEHOLDER = "your_gemini_api_key_here"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout_seconds: float = 15.0,
+        temperature: float = 0.2,
+    ) -> None:
+        resolved_key = (
+            api_key
+            or os.getenv("GEMINI_API_KEY")
+            or getattr(settings, "gemini_api_key", "")
+        )
+        if not resolved_key or resolved_key.strip() in ("", self._PLACEHOLDER):
+            raise LLMConfigurationError(
+                "Gemini API key is missing or invalid. "
+                "Set GEMINI_API_KEY in environment or .env file."
+            )
+
+        self._api_key = resolved_key.strip()
+
+        # Resolve model: if the configured model is clearly an OpenAI model, default to Gemini
+        raw_model = model or getattr(settings, "llm_model", "gemini-2.0-flash")
+        self.model = raw_model if not raw_model.startswith("gpt-") else "gemini-2.0-flash"
+
+        self.timeout_seconds = timeout_seconds
+        self.temperature = temperature
+
+        logger.info(
+            "Initializing GeminiLLMAdapter with model=%s, key=%s",
+            self.model,
+            mask_secret(self._api_key),
+        )
+
+        try:
+            from google import genai as _genai
+            from google.genai import types as _types
+            self._genai = _genai
+            self._types = _types
+            self._client = _genai.Client(api_key=self._api_key)
+        except ImportError as exc:
+            raise LLMConfigurationError(
+                "The 'google-genai' package is not installed. "
+                "Install it via 'pip install google-genai'."
+            ) from exc
+        except Exception as exc:
+            raise LLMConfigurationError(
+                f"Failed to initialize Gemini client: {exc}"
+            ) from exc
+
+    # ------------------------------------------------------------------
+    # Message format helpers
+    # ------------------------------------------------------------------
+
+    def _build_gemini_contents(
+        self, messages: list[dict[str, str]]
+    ) -> list[Any]:
+        """
+        Convert OpenAI-style role/content messages into google-genai Content objects.
+
+        - "user"      → role="user"
+        - "assistant" → role="model"
+        - "system"    → skipped (goes into system_instruction instead)
+        """
+        contents = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            text = msg.get("content", "")
+            if role == "user":
+                gemini_role = "user"
+            elif role == "assistant":
+                gemini_role = "model"
+            else:
+                continue  # system messages handled via system_instruction
+            contents.append(
+                self._types.Content(
+                    role=gemini_role,
+                    parts=[self._types.Part(text=text)],
+                )
+            )
+        return contents
+
+    # ------------------------------------------------------------------
+    # Synchronous chat
+    # ------------------------------------------------------------------
+
+    def chat(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+    ) -> str:
+        """
+        Send a synchronous chat completion request to Gemini GenerateContent API.
+
+        Raises:
+            LLMConfigurationError: Invalid/missing API key or auth failure.
+            LLMTimeoutError:       Request exceeded timeout_seconds.
+            LLMRateLimitError:     Quota or rate limit exceeded.
+            LLMProviderError:      Any other Gemini API error.
+        """
+        contents = self._build_gemini_contents(messages)
+
+        try:
+            logger.debug(
+                "Sending Gemini request: model=%s, turn_count=%d",
+                self.model,
+                len(contents),
+            )
+            response = self._client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=self._types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=self.temperature,
+                    http_options=self._types.HttpOptions(
+                        timeout=int(self.timeout_seconds * 1000),
+                    ),
+                ),
+            )
+            text = response.text
+            if text is None:
+                raise LLMProviderError("Gemini returned an empty response.")
+            return text
+
+        except LLMError:
+            raise  # re-raise our own typed exceptions unchanged
+
+        except Exception as exc:
+            self._raise_mapped_exception(exc)
+
+    # ------------------------------------------------------------------
+    # Asynchronous chat
+    # ------------------------------------------------------------------
+
+    async def achat(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+    ) -> str:
+        """
+        Send an asynchronous chat completion request to Gemini via the aio client.
+
+        asyncio.wait_for wraps the coroutine so that timeout_seconds is enforced
+        even when the SDK does not natively surface asyncio.TimeoutError.
+        """
+        import asyncio
+
+        contents = self._build_gemini_contents(messages)
+
+        try:
+            logger.debug(
+                "Sending async Gemini request: model=%s, turn_count=%d",
+                self.model,
+                len(contents),
+            )
+            response = await asyncio.wait_for(
+                self._client.aio.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=self._types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=self.temperature,
+                    ),
+                ),
+                timeout=self.timeout_seconds,
+            )
+            text = response.text
+            if text is None:
+                raise LLMProviderError("Gemini returned an empty async response.")
+            return text
+
+        except asyncio.TimeoutError as exc:
+            logger.error(
+                "Gemini async request timed out after %.1fs", self.timeout_seconds
+            )
+            raise LLMTimeoutError(
+                f"Gemini API async request timed out after {self.timeout_seconds}s."
+            ) from exc
+
+        except LLMError:
+            raise
+
+        except Exception as exc:
+            self._raise_mapped_exception(exc)
+
+    # ------------------------------------------------------------------
+    # Exception mapping — no credentials in messages
+    # ------------------------------------------------------------------
+
+    def _raise_mapped_exception(self, exc: Exception) -> None:
+        """
+        Translate google-genai SDK exceptions into our LLMError hierarchy.
+
+        Inspects only the exception type name and lowercase message tokens;
+        never logs the raw API key or any secret value.
+        """
+        exc_type = type(exc).__name__
+        exc_str = str(exc).lower()
+
+        if any(tok in exc_str for tok in ("timeout", "deadline", "timed out")):
+            logger.error("Gemini request timed out: %s", exc_type)
+            raise LLMTimeoutError(
+                f"Gemini API request timed out after {self.timeout_seconds}s."
+            ) from exc
+
+        if any(tok in exc_str for tok in (
+            "api_key", "invalid api key", "unauthenticated",
+            "permission", "401", "403",
+        )):
+            logger.error("Gemini authentication/permission error: %s", exc_type)
+            raise LLMConfigurationError("Invalid or expired Gemini API key.") from exc
+
+        if any(tok in exc_str for tok in ("quota", "rate", "429", "resource_exhausted")):
+            logger.error("Gemini rate limit exceeded: %s", exc_type)
+            raise LLMRateLimitError("Gemini API rate limit or quota exceeded.") from exc
+
+        logger.error("Gemini API error (%s): %s", exc_type, exc_str)
+        raise LLMProviderError(f"Gemini API error: {exc_type}") from exc
+
+
+# ---------------------------------------------------------------------------
 # Factory Function
 # ---------------------------------------------------------------------------
 
@@ -333,9 +572,9 @@ def create_llm_adapter(
     Factory function for instantiating the configured LLM adapter.
 
     Args:
-        provider: Provider name ("openai", "stub"). Defaults to settings.llm_provider.
+        provider: Provider name ("openai", "gemini", "stub"). Defaults to settings.llm_provider.
         model: Model name. Defaults to settings.llm_model.
-        api_key: Provider API key. Defaults to settings.openai_api_key.
+        api_key: Provider API key. Defaults to the provider-specific env var or settings field.
 
     Returns:
         Concrete LLMAdapter instance.
@@ -347,7 +586,13 @@ def create_llm_adapter(
 
     if resolved_provider == "openai":
         return OpenAILLMAdapter(api_key=api_key, model=model)
+    elif resolved_provider == "gemini":
+        return GeminiLLMAdapter(api_key=api_key, model=model)
     elif resolved_provider in {"stub", "mock", "test"}:
         return StubLLMAdapter(replies=[])
     else:
-        raise LLMConfigurationError(f"Unsupported LLM provider: '{resolved_provider}'. Supported: 'openai', 'stub'.")
+        raise LLMConfigurationError(
+            f"Unsupported LLM provider: '{resolved_provider}'. "
+            "Supported: 'openai', 'gemini', 'stub'."
+        )
+

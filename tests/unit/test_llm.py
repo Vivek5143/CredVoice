@@ -296,3 +296,173 @@ def test_deterministic_eligibility_prevents_llm_override():
     assert res2.state.stage == Stage.DISQUALIFIED
     assert res2.action == "end"
 
+
+
+# ===========================================================================
+# Gemini LLM Adapter Tests (G1–G7)
+# All tests are fully mocked — zero live API calls or real credentials required.
+# ===========================================================================
+
+from app.agent.llm import GeminiLLMAdapter  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Test G1: Missing Gemini API Key raises LLMConfigurationError
+# ---------------------------------------------------------------------------
+
+def test_gemini_adapter_missing_api_key(monkeypatch):
+    """GeminiLLMAdapter must raise LLMConfigurationError if key is absent or placeholder."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with patch("app.agent.llm.settings") as mock_settings:
+        mock_settings.gemini_api_key = ""
+        mock_settings.llm_model = "gemini-2.0-flash"
+        with pytest.raises(LLMConfigurationError) as exc_info:
+            GeminiLLMAdapter(api_key="")
+        assert "Gemini API key is missing" in str(exc_info.value)
+
+    with pytest.raises(LLMConfigurationError):
+        GeminiLLMAdapter(api_key="your_gemini_api_key_here")
+
+
+# ---------------------------------------------------------------------------
+# Test G2: Successful Gemini Response (Mocked SDK)
+# ---------------------------------------------------------------------------
+
+@patch("google.genai.Client")
+def test_gemini_adapter_successful_chat(mock_client_class):
+    """GeminiLLMAdapter.chat returns the text from a mocked Gemini SDK response."""
+    mock_response = MagicMock()
+    mock_response.text = 'Great! ```json {"is_identity_confirmed": true} ```'
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+    mock_client_class.return_value = mock_client
+
+    adapter = GeminiLLMAdapter(api_key="AIzaSy-testkey1234567890")
+    result = adapter.chat(
+        system_prompt="You are CredVoice.",
+        messages=[{"role": "user", "content": "Yes this is Priya Sharma"}],
+    )
+
+    assert result == 'Great! ```json {"is_identity_confirmed": true} ```'
+    mock_client.models.generate_content.assert_called_once()
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    assert call_kwargs.get("model") == adapter.model
+
+
+# ---------------------------------------------------------------------------
+# Test G3: Malformed / Empty Gemini output raises LLMProviderError
+# ---------------------------------------------------------------------------
+
+@patch("google.genai.Client")
+def test_gemini_adapter_empty_response_raises(mock_client_class):
+    """GeminiLLMAdapter raises LLMProviderError when response.text is None."""
+    mock_response = MagicMock()
+    mock_response.text = None  # SDK signals empty/blocked output
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+    mock_client_class.return_value = mock_client
+
+    adapter = GeminiLLMAdapter(api_key="AIzaSy-testkey1234567890")
+    with pytest.raises(LLMProviderError) as exc_info:
+        adapter.chat("System", [{"role": "user", "content": "Hi"}])
+    assert "empty" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Test G4: Timeout error maps to LLMTimeoutError
+# ---------------------------------------------------------------------------
+
+@patch("google.genai.Client")
+def test_gemini_adapter_timeout_error(mock_client_class):
+    """Exception containing 'timed out' maps to LLMTimeoutError."""
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = Exception(
+        "Request timed out after deadline"
+    )
+    mock_client_class.return_value = mock_client
+
+    adapter = GeminiLLMAdapter(api_key="AIzaSy-testkey1234567890")
+    with pytest.raises(LLMTimeoutError) as exc_info:
+        adapter.chat("System", [{"role": "user", "content": "Hi"}])
+    assert "timed out" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Test G5: Generic provider / server error maps to LLMProviderError
+# ---------------------------------------------------------------------------
+
+@patch("google.genai.Client")
+def test_gemini_adapter_provider_error(mock_client_class):
+    """Generic SDK exception (not timeout/auth/rate) maps to LLMProviderError."""
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = Exception(
+        "Internal server error 500"
+    )
+    mock_client_class.return_value = mock_client
+
+    adapter = GeminiLLMAdapter(api_key="AIzaSy-testkey1234567890")
+    with pytest.raises(LLMProviderError):
+        adapter.chat("System", [{"role": "user", "content": "Hi"}])
+
+
+# ---------------------------------------------------------------------------
+# Test G6: Factory creates GeminiLLMAdapter for provider='gemini'
+# ---------------------------------------------------------------------------
+
+@patch("google.genai.Client")
+def test_create_llm_adapter_gemini(mock_client_class, monkeypatch):
+    """Factory correctly instantiates GeminiLLMAdapter when provider='gemini'."""
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaSy-testkey1234567890")
+    adapter = create_llm_adapter(provider="gemini")
+    assert isinstance(adapter, GeminiLLMAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Test G7: Gemini cannot override deterministic eligibility (cash income)
+# ---------------------------------------------------------------------------
+
+@patch("google.genai.Client")
+def test_gemini_deterministic_eligibility_prevents_llm_override(mock_client_class):
+    """
+    Even when Gemini LLM claims is_eligible=true in its JSON, the EligibilityEngine
+    must still disqualify a cash-income applicant. The LLM is NOT the authority.
+    """
+    qualify_response = MagicMock()
+    qualify_response.text = (
+        'Got it. ```json {"property_type": "residential", "ownership": "sole", '
+        '"has_original_documents": true, "requested_loan_amount_inr": 5000000, '
+        '"occupation_type": "self_employed", "income_mode": "cash", '
+        '"property_market_value_inr": 10000000, "requested_tenure_years": 10, '
+        '"is_eligible": true} ```'
+    )
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = qualify_response
+    mock_client_class.return_value = mock_client
+
+    from app.agent.core import TurnOrchestrator
+    from app.models.conversation import Language, Stage
+
+    # Verification turn via StubLLMAdapter
+    verify_stub = StubLLMAdapter(replies=[
+        'Hi! ```json {"is_identity_confirmed": true, "is_available": true} ```',
+    ])
+    orchestrator = TurnOrchestrator(
+        customer_id="HC-GEMINI-OVERRIDE",
+        customer_name="Ramesh",
+        language=Language.ENGLISH,
+        llm=verify_stub,
+    )
+    orchestrator.process_turn("Yes I am Ramesh, I can talk now")
+
+    # Swap to Gemini adapter for qualification turn
+    gemini_adapter = GeminiLLMAdapter(api_key="AIzaSy-testkey1234567890")
+    orchestrator._llm = gemini_adapter
+    res = orchestrator.process_turn(
+        "Residential, sole, original docs, 50L loan, cash income, 10yr, 1Cr value"
+    )
+
+    # EligibilityEngine must disqualify despite Gemini's claim of eligibility
+    assert res.state.stage == Stage.DISQUALIFIED
+    assert res.action == "end"

@@ -27,9 +27,10 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
 
     # LLM Configuration
-    llm_provider: str = "openai"  # e.g., 'openai', 'anthropic', 'gemini'
+    llm_provider: str = "openai"  # e.g., 'openai', 'gemini', 'stub'
     llm_model: str = "gpt-4o-mini"
     openai_api_key: str = ""
+    gemini_api_key: str = ""  # GEMINI_API_KEY env var — used when LLM_PROVIDER=gemini
 
     # Voice Platform Integration Configuration
     voice_provider: str = "retell"  # 'retell' or 'bolna'

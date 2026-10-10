@@ -17,7 +17,7 @@ graph TD
         FastAPI --> Auth[HMAC Signature & Admin Auth]
         Auth --> SessionMgr[SessionManager / Redis & Memory Store]
         SessionMgr --> Orchestrator[TurnOrchestrator Session]
-        Orchestrator --> LLMAdapter[OpenAILLMAdapter / StubLLMAdapter]
+        Orchestrator --> LLMAdapter[OpenAILLMAdapter / GeminiLLMAdapter / StubLLMAdapter]
         Orchestrator --> KB[LAPFAQService Grounded Knowledge]
         Orchestrator --> RulesEngine[Deterministic EligibilityEngine]
     end
@@ -83,9 +83,12 @@ SERVICE_NAME=CredVoice
 LOG_LEVEL=INFO
 
 # LLM Provider Configuration
+# LLM_PROVIDER: 'openai' (default) or 'gemini'
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 OPENAI_API_KEY=your_openai_api_key_here
+# For Gemini: set LLM_PROVIDER=gemini, LLM_MODEL=gemini-2.0-flash
+GEMINI_API_KEY=your_gemini_api_key_here
 RUN_LIVE_LLM_TESTS=false
 
 # Voice Platform Integrations
@@ -198,11 +201,11 @@ python -m pytest tests/ -v
 ```
 
 ### Actual Verification Results
-- **Total Test Cases**: 114
-- **Passed**: 111
+- **Total Test Cases**: 121
+- **Passed**: 118
 - **Skipped**: 3 (Opt-in live sandbox integration tests)
 - **Failed**: 0
-- **Coverage**: Core Eligibility Engine, Session Manager, Turn Orchestrator, LLM Adapter & Exceptions, Security & Auth, Webhooks, FAQ Knowledge Base, and 20 E2E Scenario Tests.
+- **Coverage**: Core Eligibility Engine, Session Manager, Turn Orchestrator, LLM Adapter (OpenAI + Gemini) & Exceptions, Security & Auth, Webhooks, FAQ Knowledge Base, and 20 E2E Scenario Tests.
 
 ---
 
