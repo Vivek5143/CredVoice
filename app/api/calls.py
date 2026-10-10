@@ -101,7 +101,7 @@ async def terminate_call_session(
     """
     verify_admin_auth(x_api_key)
     session_mgr = get_session_manager()
-    orch = session_mgr.end_session(call_id)
+    orch = session_mgr.delete_session(call_id)
     if not orch:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

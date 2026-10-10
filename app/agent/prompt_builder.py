@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import re
 from typing import Optional
 
 from app.config import settings
@@ -407,12 +408,119 @@ def extract_json_from_response(llm_output: str) -> dict:
         return {}
 
 
+def normalize_utterance_extraction(
+    utterance: str,
+    existing_extraction: Optional[dict] = None,
+) -> dict:
+    """
+    Deterministically normalize customer utterances (Hindi & English) into structured fields.
+    Normalizes phonetic and ASR variations (e.g. 'क   ष    भ   म    ', 'ख   त    क    जम   न ',
+    'नकद नकद') to standard enum values.
+    """
+    res = dict(existing_extraction or {})
+    if not utterance or not isinstance(utterance, str):
+        return res
+
+    text = utterance.strip()
+    text_lower = text.lower()
+    collapsed = re.sub(r'[\s\-_,.]+', '', text_lower)
+
+    # 1. Language auto-detection (Devanagari script presence)
+    if re.search(r'[\u0900-\u097F]', text) and "language_switch" not in res:
+        res["language_switch"] = "hi"
+
+    # 2. Verification / Identity & Availability Normalization
+    if any(p in collapsed for p in ["हाँ", "हां", "बोलरहाहूँ", "बोलरहाहु", "बातकरसकतेहैं", "सहीसमयहै", "मैंहीहूँ"]) or any(
+        w in text_lower for w in ["yes", "speaking", "good time to speak", "can talk", "go ahead"]
+    ):
+        if "is_identity_confirmed" not in res:
+            res["is_identity_confirmed"] = True
+        if "is_available" not in res:
+            res["is_available"] = True
+
+    # 3. Property Type Normalization
+    agri_patterns = ["कषभम", "कृषि", "खेत", "खेती", "खतकजमन"]
+    if any(p in collapsed for p in agri_patterns) or any(
+        w in text_lower for w in ["agricultural", "farmland", "agriculture", "farm land"]
+    ):
+        res["property_type"] = "agricultural"
+    elif "property_type" not in res:
+        is_office_inquiry = any(term in text_lower for term in ["head office", "office address", "post office", "branch office"])
+        if any(p in collapsed for p in ["आवासीय", "मकान"]) or re.search(r'\b(?:residential|house|flat|apartment)\b', text_lower):
+            res["property_type"] = "residential"
+        elif not is_office_inquiry and (
+            any(p in collapsed for p in ["व्यावसायिक", "दुकान", "शोरूम", "कमर्शियल"])
+            or re.search(r'\b(?:commercial|shop|showroom)\b', text_lower)
+            or any(term in text_lower for term in ["office space", "office building", "office property"])
+        ):
+            res["property_type"] = "commercial"
+        elif any(p in collapsed for p in ["औद्योगिक", "कारखाना"]) or re.search(r'\b(?:industrial|factory|warehouse)\b', text_lower):
+            res["property_type"] = "industrial"
+
+    # 3. Income Mode Normalization
+    cash_patterns = ["नकद", "नगद", "रोकड़", "रोकड", "रोखड़"]
+    if any(p in collapsed for p in cash_patterns) or re.search(r'\bcash\b', text_lower):
+        res["income_mode"] = "cash"
+    elif "income_mode" not in res:
+        bank_patterns = ["बैंक", "खातेमें", "खाता"]
+        if any(p in collapsed for p in bank_patterns) or any(w in text_lower for w in ["bank", "account", "online", "cheque"]):
+            res["income_mode"] = "bank"
+
+    # 4. Ownership Normalization
+    is_ownership_question = bool(re.search(r'\b(?:is|can|are)\b.*\b(?:allowed|permitted|eligible|possible)\b|\?', text_lower))
+    if "ownership" not in res and not is_ownership_question:
+        if any(p in collapsed for p in ["एकल", "खुदका", "मेरेनाम", "मेराही"]) or re.search(r'\b(?:sole|single|only mine)\b', text_lower):
+            res["ownership"] = "sole"
+        elif any(p in collapsed for p in ["संयुक्त", "पत्नीकेसाथ", "भाईकेसाथ"]) or re.search(r'\b(?:joint|jointly)\b', text_lower):
+            res["ownership"] = "joint"
+
+    # 5. Original Documents Availability
+    if "has_original_documents" not in res:
+        if any(p in collapsed for p in ["मूलदस्तावेज़", "ओरिजिनलदस्तावेज़", "मूलकागज़ात", "कागज़ातहैं", "कागजातहैं"]):
+            res["has_original_documents"] = True
+        elif any(w in text_lower for w in ["original documents available", "have original papers"]):
+            res["has_original_documents"] = True
+
+    # 6. Existing Loan / EMI Reduction Transfer Intent
+    existing_loan_patterns = ["पुरानालोन", "चलरहालोन", "मौजूदालोन", "पहलेसेलोन"]
+    if any(p in collapsed for p in existing_loan_patterns) or any(w in text_lower for w in ["existing loan", "already have a loan", "loan on property"]):
+        res["has_existing_property_loan"] = True
+
+    emi_reduction_patterns = ["emiकम", "ईएमआईकम", "किश्तकम"]
+    if any(p in collapsed for p in emi_reduction_patterns) or any(w in text_lower for w in ["emi reduction", "reduce emi", "lower emi", "balance transfer"]):
+        res["wants_emi_reduction"] = True
+
+    # 7. ₹75 Lakh Cap Consent
+    if "proceeds_at_cap" not in res:
+        if any(p in collapsed for p in ["75लाखचलेगा", "75लाखठीकहै", "75लाखमंजूर", "सहमतिहै"]) or any(w in text_lower for w in ["75 lakh is fine", "accept 75 lakh", "proceed with 75 lakh"]):
+            res["proceeds_at_cap"] = True
+        elif any(p in collapsed for p in ["75लाखनहीं", "कमहै", "सहमतिनहीं"]) or any(w in text_lower for w in ["cannot proceed with 75 lakh", "need more than 75 lakh"]):
+            res["proceeds_at_cap"] = False
+
+    # 8. Tenure Normalization
+    tenure_match = re.search(r'\b(\d{1,2})\s*(?:years?|yrs?|साल|वर्ष)\b', text_lower)
+    if not tenure_match:
+        standalone_match = re.fullmatch(r'(\d{1,2})', text_lower.strip())
+        if standalone_match:
+            tenure_match = standalone_match
+
+    if tenure_match and "requested_tenure_years" not in res:
+        try:
+            res["requested_tenure_years"] = int(tenure_match.group(1))
+        except (ValueError, TypeError):
+            pass
+
+    return res
+
+
 def apply_extraction_to_state(
     extraction: dict,
     state: ConversationState,
+    customer_utterance: Optional[str] = None,
 ) -> ConversationState:
     """
-    Apply extracted field values from one LLM turn onto the conversation state.
+    Apply extracted field values onto the conversation state.
+    Optionally normalizes customer_utterance deterministically first.
 
     Only fields present in the extraction dict are applied. Existing values are
     overwritten if the customer corrected them. The eligibility engine is NOT
@@ -421,10 +529,14 @@ def apply_extraction_to_state(
     Args:
         extraction: Parsed extraction dict from extract_json_from_response().
         state: Mutable ConversationState to update.
+        customer_utterance: Optional raw utterance string for deterministic normalization.
 
     Returns:
         Updated ConversationState (same object, mutated in place).
     """
+    if customer_utterance:
+        extraction = normalize_utterance_extraction(customer_utterance, extraction)
+
     # -- Routing / meta fields --
     if extraction.get("callback_requested") is True:
         state.callback.callback_requested = True

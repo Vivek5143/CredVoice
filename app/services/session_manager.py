@@ -22,7 +22,7 @@ from typing import Dict, Optional, Set
 from app.agent.core import TurnOrchestrator, TurnResult, create_orchestrator
 from app.agent.llm import LLMAdapter
 from app.config import settings
-from app.models.conversation import Language, Stage
+from app.models.conversation import CallOutcome, Language, Stage
 
 logger = logging.getLogger(__name__)
 
@@ -303,11 +303,25 @@ class SessionManager:
         return result
 
     def end_session(self, call_id: str) -> Optional[TurnOrchestrator]:
-        """Explicitly delete a completed call session."""
+        """Mark a call session as ended while preserving its terminal state to prevent greeting restarts."""
+        session = self.store.get(call_id)
+        if session:
+            session.orchestrator.state.stage = Stage.ENDED
+            if session.orchestrator.state.call_outcome is None:
+                session.orchestrator.state.call_outcome = CallOutcome.DISQUALIFIED
+            self.store.save(session)
+            logger.info("Explicitly terminated call_id=%s", call_id)
+            return session.orchestrator
+        return None
+
+    def delete_session(self, call_id: str) -> Optional[TurnOrchestrator]:
+        """Explicitly delete and remove a call session from storage."""
         session = self.store.delete(call_id)
         if session:
             session.orchestrator.state.stage = Stage.ENDED
-            logger.info("Explicitly terminated call_id=%s", call_id)
+            if session.orchestrator.state.call_outcome is None:
+                session.orchestrator.state.call_outcome = CallOutcome.DISQUALIFIED
+            logger.info("Explicitly deleted call_id=%s from storage", call_id)
             return session.orchestrator
         return None
 

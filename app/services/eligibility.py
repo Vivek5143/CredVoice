@@ -65,20 +65,7 @@ class EligibilityEngine:
         requires_cap_consent = False
         is_transfer_lead = False
 
-        # 1. Existing Loan / EMI Reduction Transfer Routing Check
-        if transfer_intent:
-            if transfer_intent.has_existing_property_loan is True or transfer_intent.wants_emi_reduction is True:
-                return EligibilityResult(
-                    status=EligibilityStatus.TRANSFER_ROUTED,
-                    disqualification_reasons=[],
-                    missing_fields=[],
-                    requires_cap_consent=False,
-                    is_transfer_lead=True,
-                    handoff_ready=False,
-                    summary_explanation="Customer has existing property loan or seeks EMI reduction. Route to Loan-Transfer Specialist."
-                )
-
-        # 2. Immediate Disqualification Checks (Deterministic Mandatory Failure Rules)
+        # 1. Immediate Disqualification Checks (Deterministic Mandatory Failure Rules)
 
         # Rule 1: Property Type (Agricultural disqualifies)
         if qualification.property_type == PropertyType.AGRICULTURAL:
@@ -135,9 +122,7 @@ class EligibilityEngine:
         else:
             missing_fields.append("requested_tenure_years")
 
-        # 3. Final Result Classification
-
-        # If any disqualification condition is met, customer is DISQUALIFIED
+        # 2. Hard Disqualification Takes Absolute Precedence Over Transfer Routing
         if len(disqualifications) > 0:
             reasons_str = ", ".join([r.value for r in disqualifications])
             return EligibilityResult(
@@ -150,7 +135,21 @@ class EligibilityEngine:
                 summary_explanation=f"Customer disqualified due to: {reasons_str}."
             )
 
-        # If there are missing fields or unconfirmed cap consent, qualification is INCOMPLETE
+        # 3. Existing Loan / EMI Reduction Transfer Routing Check
+        # Only reached if there are NO disqualifications
+        if transfer_intent:
+            if transfer_intent.has_existing_property_loan is True or transfer_intent.wants_emi_reduction is True:
+                return EligibilityResult(
+                    status=EligibilityStatus.TRANSFER_ROUTED,
+                    disqualification_reasons=[],
+                    missing_fields=[],
+                    requires_cap_consent=requires_cap_consent,
+                    is_transfer_lead=True,
+                    handoff_ready=False,
+                    summary_explanation="Customer has existing property loan or seeks EMI reduction. Route to Loan-Transfer Specialist."
+                )
+
+        # 4. Incomplete Qualification Check (Missing Fields or Pending Cap Consent)
         if len(missing_fields) > 0:
             return EligibilityResult(
                 status=EligibilityStatus.INCOMPLETE,
@@ -162,7 +161,7 @@ class EligibilityEngine:
                 summary_explanation=f"Qualification incomplete. Remaining missing fields: {', '.join(missing_fields)}."
             )
 
-        # All 7 criteria met and no disqualifications -> ELIGIBLE
+        # 5. All 7 criteria met and no disqualifications -> ELIGIBLE
         return EligibilityResult(
             status=EligibilityStatus.ELIGIBLE,
             disqualification_reasons=[],
@@ -177,6 +176,7 @@ class EligibilityEngine:
 def update_conversation_eligibility(state: ConversationState) -> ConversationState:
     """
     Evaluate conversation state against eligibility engine and update state fields in-place.
+    Hard disqualification is immutable and takes precedence over all other routes.
 
     Args:
         state: ConversationState object to evaluate and update.
@@ -184,6 +184,12 @@ def update_conversation_eligibility(state: ConversationState) -> ConversationSta
     Returns:
         Updated ConversationState object.
     """
+    # Guard: An established disqualification can NEVER be overridden
+    if state.stage == Stage.DISQUALIFIED or state.eligibility_status == EligibilityStatus.DISQUALIFIED:
+        state.stage = Stage.DISQUALIFIED
+        state.eligibility_status = EligibilityStatus.DISQUALIFIED
+        return state
+
     result = EligibilityEngine.evaluate(
         qualification=state.qualification,
         transfer_intent=state.transfer_intent
@@ -194,10 +200,10 @@ def update_conversation_eligibility(state: ConversationState) -> ConversationSta
     state.missing_fields = result.missing_fields
 
     # Update conversation stage based on result
-    if result.status == EligibilityStatus.TRANSFER_ROUTED:
-        state.stage = Stage.TRANSFER_ROUTED
-    elif result.status == EligibilityStatus.DISQUALIFIED:
+    if result.status == EligibilityStatus.DISQUALIFIED:
         state.stage = Stage.DISQUALIFIED
+    elif result.status == EligibilityStatus.TRANSFER_ROUTED:
+        state.stage = Stage.TRANSFER_ROUTED
     elif result.status == EligibilityStatus.ELIGIBLE:
         state.stage = Stage.ELIGIBLE_HANDOFF
 

@@ -243,8 +243,9 @@ def test_e2e_07_tenure_outside_range():
     harness.send_turn("Yes speaking")
     t2 = harness.send_turn("I want 2 years tenure only.")
 
-    assert t2["action"] == "end"
-    assert t2["stage"] == Stage.DISQUALIFIED.value
+    assert t2["action"] == "continue"
+    assert t2["stage"] == Stage.QUALIFICATION.value
+    assert "3 and 15 years" in t2["agent_response"]
 
 
 # ---------------------------------------------------------------------------

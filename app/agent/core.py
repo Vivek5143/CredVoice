@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -26,6 +27,7 @@ from app.agent.prompt_builder import (
     apply_extraction_to_state,
     build_system_prompt,
     extract_json_from_response,
+    normalize_utterance_extraction,
 )
 from app.agent.llm import (
     LLMAdapter,
@@ -38,8 +40,11 @@ from app.agent.llm import (
 from app.models.conversation import (
     CallOutcome,
     ConversationState,
+    DisqualificationReason,
     EligibilityStatus,
+    IncomeMode,
     Language,
+    PropertyType,
     Stage,
 )
 from app.services.eligibility import EligibilityEngine, update_conversation_eligibility
@@ -164,8 +169,13 @@ class TurnOrchestrator:
             TurnResult with agent_reply, updated state, and action disposition.
         """
         if self._is_terminal_stage():
+            reply = (
+                "समय देने के लिए धन्यवाद। नमस्ते।"
+                if self.state.language == Language.HINDI
+                else "Thank you for your time. Goodbye."
+            )
             return TurnResult(
-                agent_reply="Thank you for your time. Goodbye.",
+                agent_reply=reply,
                 state=self.state,
                 action="end",
             )
@@ -174,53 +184,172 @@ class TurnOrchestrator:
         if self._turn_count > self.MAX_TURNS:
             logger.warning("Session %s exceeded MAX_TURNS — forcing end.", self._session_id)
             self.state.stage = Stage.ENDED
+            reply = (
+                "माफ़ कीजिए, हम फिर कभी बात करेंगे। नमस्ते।"
+                if self.state.language == Language.HINDI
+                else "I'm sorry, let's connect again at a convenient time. Goodbye."
+            )
             return TurnResult(
-                agent_reply="I'm sorry, let's connect again at a convenient time. Goodbye.",
+                agent_reply=reply,
                 state=self.state,
                 action="end",
             )
 
         self._history.append({"role": "user", "content": customer_utterance})
 
-        # FAQ lookup — run before building prompt so context can be injected
+        # Auto-detect language if customer speaks Devanagari Hindi
+        if re.search(r'[\u0900-\u097F]', customer_utterance):
+            self.state.language = Language.HINDI
+
+        # 2. Extract & normalize structured data directly from customer utterance
+        extraction = normalize_utterance_extraction(customer_utterance)
+
+        # 3. Check for out-of-range tenure before state update
+        raw_tenure = extraction.get("requested_tenure_years")
+        invalid_tenure = None
+        if raw_tenure is not None:
+            if raw_tenure < EligibilityEngine.MIN_TENURE or raw_tenure > EligibilityEngine.MAX_TENURE:
+                invalid_tenure = raw_tenure
+                extraction.pop("requested_tenure_years", None)
+
+        # 4. Apply extraction to state
+        apply_extraction_to_state(extraction, self.state)
+
+        # 5. Advance stage from VERIFICATION if appropriate
+        self._advance_verification_stage()
+
+        # 6. Evaluate deterministic eligibility immediately on new answers
+        if (
+            self.state.qualification.property_type == PropertyType.AGRICULTURAL
+            or self.state.qualification.income_mode == IncomeMode.CASH
+            or self.state.stage == Stage.QUALIFICATION
+        ):
+            update_conversation_eligibility(self.state)
+
+        # 7. Check deterministic overrides: Disqualification, Tenure Clarification, Transfer, Handoff
+        is_hindi = self.state.language == Language.HINDI
+
+        # Terminal Disqualification Check (Hard disqualification always takes absolute precedence)
+        if self.state.stage == Stage.DISQUALIFIED:
+            if DisqualificationReason.AGRICULTURAL_PROPERTY in self.state.disqualification_reasons:
+                disq_reply = (
+                    "माफ़ कीजिए, हमारी वर्तमान नीति के अनुसार हम केवल आवासीय, व्यावसायिक या औद्योगिक संपत्ति पर ऋण प्रदान करते हैं। कृषि संपत्ति पर ऋण उपलब्ध नहीं है। आपके समय के लिए धन्यवाद।"
+                    if is_hindi else
+                    "I apologize, but according to our policy, we only provide loans against residential, commercial, or industrial properties. Agricultural property is not eligible. Thank you for your time."
+                )
+            elif DisqualificationReason.CASH_INCOME in self.state.disqualification_reasons:
+                disq_reply = (
+                    "माफ़ कीजिए, हमारी वर्तमान नीति के अनुसार ऋण के लिए आय बैंक खाते में प्राप्त होना अनिवार्य है। नकद आय पर ऋण उपलब्ध नहीं है। आपके समय के लिए धन्यवाद।"
+                    if is_hindi else
+                    "I apologize, but our policy requires income to be deposited into a bank account. Cash income is not eligible. Thank you for your time."
+                )
+            else:
+                disq_reply = (
+                    "माफ़ कीजिए, हमारी वर्तमान नीति के अनुसार हम इस समय आपके आवेदन को आगे बढ़ाने में असमर्थ हैं। आपके समय के लिए धन्यवाद।"
+                    if is_hindi else
+                    "I apologize, but according to our policy, we are unable to proceed with your application at this time. Thank you for your time."
+                )
+            self._set_call_outcome("end")
+            self._history.append({"role": "assistant", "content": disq_reply})
+            return TurnResult(
+                agent_reply=disq_reply,
+                state=self.state,
+                action="end",
+                extraction=extraction,
+            )
+
+        # Tenure Clarification Check: If tenure is outside 3-15 and customer is NOT disqualified
+        if invalid_tenure is not None:
+            tenure_clarify_reply = (
+                f"होम क्रेडिट में ऋण अवधि केवल 3 से 15 वर्ष के बीच उपलब्ध है। {invalid_tenure} वर्ष की अवधि उपलब्ध नहीं है। कृपया 3 से 15 वर्ष के बीच अपनी पसंदीदा अवधि बताएं।"
+                if is_hindi else
+                f"Home Credit offers loan tenures between 3 and 15 years only. A tenure of {invalid_tenure} years is not available. Please choose a tenure between 3 and 15 years."
+            )
+            self._history.append({"role": "assistant", "content": tenure_clarify_reply})
+            return TurnResult(
+                agent_reply=tenure_clarify_reply,
+                state=self.state,
+                action="continue",
+                extraction=extraction,
+            )
+
+        # Transfer Routing Check (Only for non-disqualified leads)
+        if self.state.stage == Stage.TRANSFER_ROUTED:
+            transfer_reply = (
+                "आपके मौजूदा ऋण और ईएमआई में कमी के लिए, मैं आपकी कॉल हमारे लोन-ट्रांसफर विशेषज्ञ को स्थानांतरित कर रहा हूँ। कृपया लाइन पर बने रहें।"
+                if is_hindi else
+                "To assist you with your existing loan and EMI reduction, I am transferring your call to our Loan-Transfer Specialist. Please stay on the line."
+            )
+            self._set_call_outcome("transfer")
+            self._history.append({"role": "assistant", "content": transfer_reply})
+            return TurnResult(
+                agent_reply=transfer_reply,
+                state=self.state,
+                action="transfer",
+                extraction=extraction,
+            )
+
+        # Eligible Handoff Check
+        if self.state.stage == Stage.ELIGIBLE_HANDOFF:
+            handoff_reply = (
+                "बधाई हो! आपकी प्रारंभिक पात्रता पूरी हो गई है। मैं आपकी कॉल हमारे वरिष्ठ ऋण विशेषज्ञ को सौंप रहा हूँ जो आगे की प्रक्रिया में आपकी सहायता करेंगे।"
+                if is_hindi else
+                "Congratulations! You meet our preliminary eligibility criteria. I am connecting you with our Senior Loan Expert who will assist you with the next steps."
+            )
+            self._set_call_outcome("handoff")
+            self._history.append({"role": "assistant", "content": handoff_reply})
+            return TurnResult(
+                agent_reply=handoff_reply,
+                state=self.state,
+                action="handoff",
+                extraction=extraction,
+            )
+
+        # Callback Requested Check
+        if self.state.stage == Stage.CALLBACK_REQUESTED:
+            callback_reply = (
+                "धन्यवाद! हमने आपका अनुरोध दर्ज कर लिया है और हमारे विशेषज्ञ आपके बताए गए समय पर आपसे संपर्क करेंगे। नमस्ते।"
+                if is_hindi else
+                "Thank you! We have recorded your request and our expert will contact you at your preferred time. Have a good day."
+            )
+            self._set_call_outcome("callback")
+            self._history.append({"role": "assistant", "content": callback_reply})
+            return TurnResult(
+                agent_reply=callback_reply,
+                state=self.state,
+                action="callback",
+                extraction=extraction,
+            )
+
+        # 8. Conversational Turn Processing via LLM (State is already updated)
         faq_result: KnowledgeResult = self._knowledge.lookup(
             utterance=customer_utterance,
             language=self.state.language.value,
         )
         faq_context = faq_result.answer if faq_result.found else None
 
-        # Build prompt (injects FAQ context when available)
         system_prompt = build_system_prompt(self.state, faq_context=faq_context)
 
-        # Call LLM
         raw_reply = self._call_llm(system_prompt, self._history)
 
-        # Extract structured data from reply
-        extraction = extract_json_from_response(raw_reply)
-        logger.debug("Turn %d extraction: %s", self._turn_count, json.dumps(extraction))
+        llm_extraction = extract_json_from_response(raw_reply)
+        if llm_extraction:
+            extraction.update(llm_extraction)
+            apply_extraction_to_state(llm_extraction, self.state)
+            self._advance_verification_stage()
+            if (
+                self.state.qualification.property_type == PropertyType.AGRICULTURAL
+                or self.state.qualification.income_mode == IncomeMode.CASH
+                or self.state.stage == Stage.QUALIFICATION
+            ):
+                update_conversation_eligibility(self.state)
 
-        # Apply extraction to state (pure mutation, no eligibility check yet)
-        apply_extraction_to_state(extraction, self.state)
-
-        # After extraction, advance stage from VERIFICATION if appropriate
-        self._advance_verification_stage()
-
-        # Run eligibility engine (deterministic — overrides any LLM eligibility claim)
-        if self.state.stage == Stage.QUALIFICATION:
-            update_conversation_eligibility(self.state)
-
-        # Determine action disposition
         action = self._derive_action()
-
-        # Set call outcome for terminal stages
         self._set_call_outcome(action)
 
-        # Strip the JSON block from the agent's visible reply
         visible_reply = self._strip_json_block(raw_reply)
-
         self._history.append({"role": "assistant", "content": visible_reply})
 
-        # faq_answered is True when FAQ was looked up AND LLM signalled it in extraction
         faq_answered = faq_result.found or bool(extraction.get("faq_answered"))
 
         logger.info(

@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.calls import router as calls_router
+from app.api.tools import router as tools_router
 from app.api.webhooks import router as webhooks_router
 from app.config import settings
 from app.services.knowledge import get_knowledge_service
@@ -60,6 +61,7 @@ async def security_and_correlation_middleware(request: Request, call_next):
 # Register API Routers
 app.include_router(webhooks_router, prefix=f"{settings.api_prefix}/webhooks")
 app.include_router(calls_router, prefix=f"{settings.api_prefix}/calls")
+app.include_router(tools_router, prefix=f"{settings.api_prefix}/tools")
 
 
 @app.get("/", tags=["General"])

@@ -169,11 +169,73 @@ python -m pytest tests/integration/test_live_sandbox.py -v
 | :--- | :--- | :--- | :--- |
 | `/health` | `GET` | Public | Liveness probe (returns status & version) |
 | `/readiness` | `GET` | Public | Readiness probe (checks KB & Redis connection) |
+| `/api/v1/tools/check-lap-eligibility` | `POST` | `x-api-key` | Bolna custom function tool for deterministic qualification |
 | `/api/v1/webhooks/retell` | `POST` | HMAC Signature | Retell AI event webhook handler |
 | `/api/v1/webhooks/bolna` | `POST` | HMAC Signature | Bolna event webhook handler |
 | `/api/v1/webhooks/turn` | `POST` | Optional | Direct text turn simulation endpoint |
 | `/api/v1/calls/{call_id}` | `GET` | `x-api-key` Admin | Inspect active call state & history |
 | `/api/v1/calls/{call_id}` | `DELETE` | `x-api-key` Admin | Terminate call session manually |
+
+### Bolna Custom Tool Configuration: `check_lap_eligibility`
+
+Configure in Bolna Agent Studio under **Custom Tools**:
+- **Tool Name**: `check_lap_eligibility`
+- **Method**: `POST`
+- **URL**: `https://<your-domain>/api/v1/tools/check-lap-eligibility`
+- **Headers**:
+  ```http
+  x-api-key: your_bolna_api_key_here
+  Content-Type: application/json
+  ```
+
+#### Example Request Payload
+```json
+{
+  "property_type": "residential",
+  "ownership": "sole",
+  "has_original_documents": true,
+  "requested_loan_amount_inr": 5000000.0,
+  "proceeds_at_cap": null,
+  "occupation_type": "salaried",
+  "income_mode": "bank",
+  "property_market_value_inr": 12000000.0,
+  "requested_tenure_years": 10,
+  "has_existing_property_loan": false,
+  "wants_emi_reduction": false
+}
+```
+
+#### Example Response (Eligible)
+```json
+{
+  "status": "eligible",
+  "is_eligible": true,
+  "handoff_ready": true,
+  "is_transfer_lead": false,
+  "requires_cap_consent": false,
+  "disqualification_reasons": [],
+  "missing_fields": [],
+  "summary_explanation": "Customer successfully qualified for Home Credit Loan Against Property. Ready for Senior Expert handoff.",
+  "recommended_spoken_reply": "Congratulations! Based on the details provided, you qualify for Home Credit Loan Against Property of up to ₹75 Lakh. I am connecting you with our Senior Loan Specialist to proceed with your application."
+}
+```
+
+#### Local Testing via cURL
+```bash
+curl -X POST "http://localhost:8000/api/v1/tools/check-lap-eligibility" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your_bolna_api_key_here" \
+  -d '{
+    "property_type": "residential",
+    "ownership": "sole",
+    "has_original_documents": true,
+    "requested_loan_amount_inr": 5000000.0,
+    "occupation_type": "salaried",
+    "income_mode": "bank",
+    "property_market_value_inr": 12000000.0,
+    "requested_tenure_years": 10
+  }'
+```
 
 ---
 
@@ -201,11 +263,11 @@ python -m pytest tests/ -v
 ```
 
 ### Actual Verification Results
-- **Total Test Cases**: 121
-- **Passed**: 118
+- **Total Test Cases**: 138
+- **Passed**: 135
 - **Skipped**: 3 (Opt-in live sandbox integration tests)
 - **Failed**: 0
-- **Coverage**: Core Eligibility Engine, Session Manager, Turn Orchestrator, LLM Adapter (OpenAI + Gemini) & Exceptions, Security & Auth, Webhooks, FAQ Knowledge Base, and 20 E2E Scenario Tests.
+- **Coverage**: Core Eligibility Engine, Session Manager, Turn Orchestrator, LLM Adapter (OpenAI + Gemini) & Exceptions, Bolna Custom Tools (`check_lap_eligibility`), Security & Auth, Webhooks, FAQ Knowledge Base, and 20 E2E Scenario Tests.
 
 ---
 
